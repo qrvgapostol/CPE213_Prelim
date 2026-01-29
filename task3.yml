@@ -1,0 +1,100 @@
+---
+- name: Enforce default-deny firewall with rate limiting
+  hosts: all
+  become: true
+  vars:
+    ssh_port: 22
+    ssh_rate: "3/min"
+    ssh_burst: 5
+
+    http_rate: "25/min"
+    http_burst: 50
+
+  tasks:
+    - name: Ensure iptables is installed
+      package:
+        name: iptables
+        state: present
+
+    - name: Flush existing iptables rules
+      iptables:
+        flush: yes
+
+    - name: Set default policies to DROP
+      iptables:
+        chain: "{{ item.chain }}"
+        policy: DROP
+      loop:
+        - { chain: INPUT }
+        - { chain: FORWARD }
+        - { chain: OUTPUT }
+
+    - name: Allow all outbound traffic
+      iptables:
+        chain: OUTPUT
+        policy: ACCEPT
+
+    - name: Allow loopback traffic
+      iptables:
+        chain: INPUT
+        in_interface: lo
+        jump: ACCEPT
+
+    - name: Allow established and related connections
+      iptables:
+        chain: INPUT
+        match: conntrack
+        ctstate: ESTABLISHED,RELATED
+        jump: ACCEPT
+
+    - name: Allow ICMP (ping) with rate limiting
+      iptables:
+        chain: INPUT
+        protocol: icmp
+        match: limit
+        limit: 5/second
+        limit_burst: 10
+        jump: ACCEPT
+
+    - name: Allow SSH with rate limiting
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "{{ ssh_port }}"
+        syn: match
+        match: hashlimit
+        hashlimit_name: ssh
+        hashlimit: "{{ ssh_rate }}"
+        hashlimit_burst: "{{ ssh_burst }}"
+        hashlimit_mode: srcip
+        jump: ACCEPT
+
+    - name: Allow HTTP with rate limiting
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: 80
+        match: hashlimit
+        hashlimit_name: http
+        hashlimit: "{{ http_rate }}"
+        hashlimit_burst: "{{ http_burst }}"
+        hashlimit_mode: srcip
+        jump: ACCEPT
+
+    - name: Allow HTTPS with rate limiting
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: 443
+        match: hashlimit
+        hashlimit_name: https
+        hashlimit: "{{ http_rate }}"
+        hashlimit_burst: "{{ http_burst }}"
+        hashlimit_mode: srcip
+        jump: ACCEPT
+
+    - name: Drop everything else (explicit)
+      iptables:
+        chain: INPUT
+        jump: DROP
+
