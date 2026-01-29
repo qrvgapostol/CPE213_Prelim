@@ -1,0 +1,74 @@
+---
+- name: Install and configure Fail2Ban IPS
+  hosts: all
+  become: yes
+  vars:
+
+    f2b_bantime: 1h
+    f2b_findtime: 10m
+    f2b_maxretry: 5
+    f2b_perm_bantime: -1
+    f2b_loglevel: INFO
+
+  tasks:
+    - name: Install Fail2Ban
+      package:
+        name: fail2ban
+        state: present
+
+    - name: Ensure Fail2Ban log directory exists
+      file:
+        path: /var/log/fail2ban.log
+        state: touch
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Configure Fail2Ban global settings
+      copy:
+        dest: /etc/fail2ban/fail2ban.local
+        content: |
+          [Definition]
+          loglevel = {{ f2b_loglevel }}
+          logtarget = /var/log/fail2ban.log
+          socket = /var/run/fail2ban/fail2ban.sock
+          pidfile = /var/run/fail2ban/fail2ban.pid
+
+    - name: Configure SSH jail for intrusion prevention
+      copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [DEFAULT]
+          bantime  = {{ f2b_bantime }}
+          findtime = {{ f2b_findtime }}
+          maxretry = {{ f2b_maxretry }}
+          backend  = systemd
+          usedns   = warn
+          banaction = iptables-multiport
+          banaction_allports = iptables-allports
+
+          bantime.increment = true
+          bantime.factor = 2
+          bantime.maxtime = {{ f2b_perm_bantime }}
+
+          [sshd]
+          enabled = true
+          port    = ssh
+          filter  = sshd
+          logpath = %(sshd_log)s
+          maxretry = {{ f2b_maxretry }}
+
+    - name: Ensure Fail2Ban is enabled and running
+      service:
+        name: fail2ban
+        enabled: yes
+        state: restarted
+
+    - name: Show active Fail2Ban jails
+      command: fail2ban-client status
+      register: f2b_status
+      changed_when: false
+
+    - name: Display Fail2Ban status
+      debug:
+        var: f2b_status.stdout
